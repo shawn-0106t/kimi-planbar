@@ -6,10 +6,8 @@
 # (network fetch + atomic replace). Colors: green <60%, yellow 60-84%, red >=85%.
 import json
 import os
-import subprocess
 import sys
 import time
-import urllib.request
 from datetime import datetime, timezone
 
 HOME = os.path.expanduser('~/.kimi-code')
@@ -66,6 +64,7 @@ def load_token():
 
 
 def fetch_quota():
+    import urllib.request  # deferred: only the background refresher needs it
     key = load_token()
     if not key:
         return None
@@ -118,6 +117,7 @@ def maybe_refresh():
     # storm, and a failed refresh is retried after RETRY seconds.
     t = time.time() - TTL + RETRY
     os.utime(CACHE, (t, t))
+    import subprocess  # deferred: keep the render path under the 300ms cap
     subprocess.Popen([sys.executable, os.path.abspath(__file__), '--refresh'],
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                      stderr=subprocess.DEVNULL, start_new_session=True)
@@ -142,6 +142,12 @@ def main():
     if '--refresh' in sys.argv:
         refresh()
         return
+    # Windows pipes default to the locale codepage; the TUI expects UTF-8.
+    # 'replace' keeps stray lone surrogates (mojibake paths) from crashing print.
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
     try:
         d = json.load(sys.stdin)
     except Exception:
@@ -161,12 +167,17 @@ def main():
     if model:
         parts.append(f'\033[36m{model}\033[0m')
 
-    p = (dig(d, 'usage', 'used_percentage') or dig(d, 'usage', 'percentage')
-         or dig(d, 'context_window', 'used_percentage')
-         or dig(d, 'context', 'used_percentage'))
+    # Kimi Code's snapshot: contextUsage is a 0-1 fraction; gitBranch is a string.
+    p = d.get('contextUsage')
     if isinstance(p, (int, float)):
-        if p <= 1 and dig(d, 'usage', 'used') is not None:
+        p *= 100
+    else:
+        p = (dig(d, 'usage', 'used_percentage') or dig(d, 'usage', 'percentage')
+             or dig(d, 'context_window', 'used_percentage')
+             or dig(d, 'context', 'used_percentage'))
+        if isinstance(p, (int, float)) and p <= 1 and dig(d, 'usage', 'used') is not None:
             p *= 100
+    if isinstance(p, (int, float)):
         parts.append(f'\033[{col(p)}mCtx {p:.1f}%\033[0m')
 
     q = read_cache()
@@ -179,7 +190,7 @@ def main():
         home = os.path.expanduser('~')
         parts.append(cwd.replace(home, '~', 1) if cwd.startswith(home) else cwd)
 
-    git = d.get('git') or dig(d, 'git', 'branch')
+    git = d.get('gitBranch') or d.get('git') or dig(d, 'git', 'branch')
     if isinstance(git, dict):
         git = git.get('branch')
     if git:
