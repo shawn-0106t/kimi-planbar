@@ -13,7 +13,16 @@ from datetime import datetime, timezone
 HOME = os.path.expanduser('~/.kimi-code')
 DIR = os.path.join(HOME, 'scripts')
 CACHE = os.path.join(DIR, 'quota-cache')
-TTL = 300          # seconds a cached quota string is considered fresh
+def _env_int(name, default, lo, hi):
+    # Optional numeric knob from the environment (same pattern as QUOTA_DEBUG):
+    # unset or unparsable -> default; otherwise clamped into [lo, hi].
+    try:
+        return max(lo, min(hi, int(os.environ.get(name, ''))))
+    except ValueError:
+        return default
+
+
+TTL = _env_int('QUOTA_TTL', 300, 15, 3600)  # seconds a cached quota string is fresh
 RETRY = 30         # seconds before retrying after a failed/in-flight refresh
 
 
